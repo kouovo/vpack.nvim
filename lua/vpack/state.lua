@@ -36,6 +36,21 @@ local function row_to_index(row)
     return nil
   end
 
+  local row_map = M.snapshot.row_map or {}
+  if row_map[row] then
+    return row_map[row]
+  end
+
+  for offset = 1, #items + DETAIL_LINE_COUNT + 8 do
+    if row_map[row + offset] then
+      return row_map[row + offset]
+    end
+
+    if row_map[row - offset] then
+      return row_map[row - offset]
+    end
+  end
+
   local index = row - FIRST_ITEM_LINE + 1
   local expanded_index = M.snapshot.details_open and current_index() or nil
 
@@ -60,6 +75,18 @@ local function clamp_cursor(row)
     return FIRST_ITEM_LINE
   end
 
+  local row_map = M.snapshot.row_map or {}
+  if not vim.tbl_isempty(row_map) then
+    local mapped = row_to_index(row)
+    if mapped then
+      for mapped_row, item_index in pairs(row_map) do
+        if item_index == mapped then
+          return mapped_row
+        end
+      end
+    end
+  end
+
   local last_item_line = FIRST_ITEM_LINE + #items - 1
   return math.min(math.max(row, FIRST_ITEM_LINE), last_item_line)
 end
@@ -67,6 +94,7 @@ end
 ---@return table
 function M.refresh()
   M.snapshot.items = backend.list()
+  M.snapshot.row_map = M.snapshot.row_map or {}
   M.snapshot.cursor = clamp_cursor(M.snapshot.cursor)
 
   if M.snapshot.details_open then
@@ -136,6 +164,7 @@ function M.reset()
   M.snapshot.details_open = false
   M.snapshot.error = nil
   M.snapshot.busy = false
+  M.snapshot.row_map = {}
 end
 
 ---@return integer

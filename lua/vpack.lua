@@ -43,7 +43,9 @@ function M.render()
   render.render(buf, state.get())
 
   if win and vim.api.nvim_win_is_valid(win) then
-    vim.api.nvim_win_set_cursor(win, { state.get_cursor(), 0 })
+    local line_count = vim.api.nvim_buf_line_count(buf)
+    local row = math.min(math.max(1, state.get_cursor()), line_count)
+    vim.api.nvim_win_set_cursor(win, { row, 0 })
   end
 end
 

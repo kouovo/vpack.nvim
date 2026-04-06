@@ -7,6 +7,16 @@ local function notify(message, level)
   vim.notify(message, level or vim.log.levels.INFO, { title = "vpack" })
 end
 
+local function try_backend(action, on_error)
+  local ok, err = pcall(action)
+  if ok then
+    return true
+  end
+
+  notify(on_error(err), vim.log.levels.ERROR)
+  return false
+end
+
 local function map(buf, lhs, rhs, desc)
   vim.keymap.set("n", lhs, rhs, {
     buffer = buf,
@@ -49,13 +59,31 @@ function M.update_current()
     return
   end
 
-  backend.update(current.name)
+  local ok = try_backend(function()
+    backend.update(current.name)
+  end, function(err)
+    return string.format("Failed to update %s: %s", current.name, err)
+  end)
+
+  if not ok then
+    return
+  end
+
   notify(string.format("Updating %s", current.name))
   require("vpack").refresh()
 end
 
 function M.update_all()
-  backend.update_all()
+  local ok = try_backend(function()
+    backend.update_all()
+  end, function(err)
+    return string.format("Failed to update packages: %s", err)
+  end)
+
+  if not ok then
+    return
+  end
+
   notify("Updating all packages")
   require("vpack").refresh()
 end
@@ -69,7 +97,21 @@ function M.delete_current()
     return
   end
 
-  backend.delete(current.name)
+  if current.active then
+    notify(string.format("Cannot delete active package %s", current.name), vim.log.levels.WARN)
+    return
+  end
+
+  local ok = try_backend(function()
+    backend.delete(current.name)
+  end, function(err)
+    return string.format("Failed to delete %s: %s", current.name, err)
+  end)
+
+  if not ok then
+    return
+  end
+
   notify(string.format("Deleted %s", current.name))
   require("vpack").refresh()
 end
@@ -90,7 +132,16 @@ function M.clean()
     return
   end
 
-  backend.clean(names)
+  local ok = try_backend(function()
+    backend.clean(names)
+  end, function(err)
+    return string.format("Failed to clean packages: %s", err)
+  end)
+
+  if not ok then
+    return
+  end
+
   notify(string.format("Cleaned %d packages", #names))
   require("vpack").refresh()
 end

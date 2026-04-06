@@ -2,6 +2,8 @@ local M = {}
 
 local namespace = vim.api.nvim_create_namespace("vpack.ui")
 local PADDING = 2
+local ITEM_INDENT = 2
+local DETAIL_INDENT = 4
 
 local function with_padding(line, padding)
   return string.rep(" ", padding) .. line
@@ -22,21 +24,24 @@ local function format_item(item)
   return string.format("%s %s  %s", status, item.short_name, revision)
 end
 
+local function section_title(name, items)
+  return string.format("%s (%d)", name, #items)
+end
+
 local function detail_lines(item)
   if not item then
     return {
-      "Details",
-      "  No package selected.",
+      string.rep(" ", DETAIL_INDENT) .. "No package selected.",
     }
   end
 
   local source = item.spec and (item.spec.src or item.spec.url) or "-"
 
   return {
-    string.format("  source  %s", source),
-    string.format("  path    %s", item.path or "-"),
-    string.format("  state   %s", item.active and "active" or "inactive"),
-    string.format("  commit  %s", item.rev and item.rev:sub(1, 7) or "-------"),
+    string.format("%ssource  %s", string.rep(" ", DETAIL_INDENT), source),
+    string.format("%spath    %s", string.rep(" ", DETAIL_INDENT), item.path or "-"),
+    string.format("%sstate   %s", string.rep(" ", DETAIL_INDENT), item.active and "active" or "inactive"),
+    string.format("%scommit  %s", string.rep(" ", DETAIL_INDENT), item.rev and item.rev:sub(1, 7) or "-------"),
   }
 end
 
@@ -46,6 +51,21 @@ function M.render(buf, snapshot)
   local padding = PADDING
 
   local items = snapshot.items or {}
+  local loaded = {}
+  local unloaded = {}
+  local index_by_name = {}
+
+  for index, item in ipairs(items) do
+    index_by_name[item.name] = index
+
+    if item.active then
+      table.insert(loaded, item)
+    else
+      table.insert(unloaded, item)
+    end
+  end
+
+  local row_map = {}
   local lines = {
     with_padding(header_line(items), padding),
     "",
@@ -59,16 +79,37 @@ function M.render(buf, snapshot)
   if vim.tbl_isempty(items) then
     table.insert(lines, with_padding("No managed packages found.", padding))
   else
-    for _, item in ipairs(items) do
-      table.insert(lines, with_padding(format_item(item), padding))
+    local function append_section(name, section_items)
+      if vim.tbl_isempty(section_items) then
+        return
+      end
 
-      if snapshot.details_open and snapshot.current and snapshot.current.name == item.name then
-        for _, line in ipairs(detail_lines(item)) do
-          table.insert(lines, with_padding(line, padding))
+      table.insert(lines, with_padding(section_title(name, section_items), padding))
+
+      for _, item in ipairs(section_items) do
+        table.insert(lines, with_padding(format_item(item), padding + ITEM_INDENT))
+        row_map[#lines] = index_by_name[item.name]
+
+        if snapshot.details_open and snapshot.current and snapshot.current.name == item.name then
+          for _, line in ipairs(detail_lines(item)) do
+            table.insert(lines, with_padding(line, padding + ITEM_INDENT))
+            row_map[#lines] = index_by_name[item.name]
+          end
         end
       end
+
+      table.insert(lines, "")
     end
+
+    append_section("Loaded", loaded)
+    append_section("Unloaded", unloaded)
   end
+
+  while lines[#lines] == "" do
+    table.remove(lines)
+  end
+
+  snapshot.row_map = row_map
 
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
@@ -76,16 +117,15 @@ function M.render(buf, snapshot)
   vim.api.nvim_buf_add_highlight(buf, namespace, "Title", 0, padding, -1)
   vim.api.nvim_buf_add_highlight(buf, namespace, "Comment", 1, padding, -1)
 
-  local row = 3
-  for _, item in ipairs(items) do
-    row = row + 1
-    vim.api.nvim_buf_add_highlight(buf, namespace, "Identifier", row - 1, padding + 2, -1)
+  for row, line in ipairs(lines) do
+    local lnum = row - 1
 
-    if snapshot.details_open and snapshot.current and snapshot.current.name == item.name then
-      for _ = 1, 4 do
-        row = row + 1
-        vim.api.nvim_buf_add_highlight(buf, namespace, "Comment", row - 1, padding, -1)
-      end
+    if line:find("^%s*Loaded %(%d+%)") or line:find("^%s*Unloaded %(%d+%)") then
+      vim.api.nvim_buf_add_highlight(buf, namespace, "Title", lnum, padding, -1)
+    elseif row_map[row] then
+      vim.api.nvim_buf_add_highlight(buf, namespace, "Identifier", lnum, padding + 2, -1)
+    elseif line:find("^%s+source") or line:find("^%s+path") or line:find("^%s+state") or line:find("^%s+commit") then
+      vim.api.nvim_buf_add_highlight(buf, namespace, "Comment", lnum, padding, -1)
     end
   end
 

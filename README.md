@@ -22,14 +22,6 @@ Small UI for Neovim 0.12 `vim.pack`.
 
 ## Install
 
-### lazy.nvim
-
-```lua
-{
-  "kouovo/vpack.nvim",
-}
-```
-
 ### vim.pack
 
 ```lua

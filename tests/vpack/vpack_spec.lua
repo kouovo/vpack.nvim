@@ -93,7 +93,7 @@ describe("vpack", function()
     end
 
     local view = vpack.open()
-    vim.api.nvim_win_set_cursor(view.win, { 5, 0 })
+    vim.api.nvim_win_set_cursor(view.win, { 9, 0 })
 
     actions.update_current()
 
@@ -129,11 +129,34 @@ describe("vpack", function()
     end
 
     local view = vpack.open()
-    vim.api.nvim_win_set_cursor(view.win, { 5, 0 })
+    vim.api.nvim_win_set_cursor(view.win, { 9, 0 })
 
     actions.delete_current()
 
     assert.are.equal("plenary.nvim", deleted)
+  end)
+
+  it("does not try to delete an active package", function()
+    local notice
+
+    backend.list = function()
+      return {
+        { name = "alpha-nvim", short_name = "alpha-nvim", active = true, rev = "abcdef01", spec = {} },
+      }
+    end
+
+    backend.delete = function()
+      error("delete should not be called for active packages")
+    end
+
+    vim.notify = function(message)
+      notice = message
+    end
+
+    vpack.open()
+    actions.delete_current()
+
+    assert.are.equal("Cannot delete active package alpha-nvim", notice)
   end)
 
   it("cleans all non-active packages", function()
