@@ -9,19 +9,19 @@ local function with_padding(line, padding)
   return string.rep(" ", padding) .. line
 end
 
-local function header_line(items)
+local function format_item(item)
+  local status = item.active and "●" or "○"
+  local revision = item.rev and item.rev:sub(1, 7) or "-------"
+  return string.format("%s %s  %s", status, item.short_name, revision)
+end
+
+local function summary_line(items)
   local total = #items
   local active = vim.iter(items):fold(0, function(acc, item)
     return acc + (item.active and 1 or 0)
   end)
 
-  return string.format("Vpack  %d plugins (%d active)", total, active)
-end
-
-local function format_item(item)
-  local status = item.active and "●" or "○"
-  local revision = item.rev and item.rev:sub(1, 7) or "-------"
-  return string.format("%s %s  %s", status, item.short_name, revision)
+  return string.format("%d plugins (%d active)", total, active)
 end
 
 local function section_title(name, items)
@@ -67,8 +67,7 @@ function M.render(buf, snapshot)
 
   local row_map = {}
   local lines = {
-    with_padding(header_line(items), padding),
-    "",
+    with_padding(summary_line(items), padding),
     with_padding(
       "[<CR>] details  [r] refresh  [u] update  [U] update all  [d] delete  [X] clean  [l] log  [q] quit",
       padding

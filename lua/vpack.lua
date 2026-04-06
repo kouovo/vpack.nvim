@@ -23,7 +23,10 @@ function M.open()
   local view = window.open(M.config.window)
   M.render()
   actions.attach(view.buf)
-  vim.api.nvim_win_set_cursor(view.win, { state.get_cursor(), 0 })
+
+  local line_count = vim.api.nvim_buf_line_count(view.buf)
+  local row = math.min(math.max(1, state.get_cursor()), line_count)
+  vim.api.nvim_win_set_cursor(view.win, { row, 0 })
 
   return view
 end

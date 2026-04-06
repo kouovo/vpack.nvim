@@ -54,6 +54,8 @@ function M.open(opts)
     height = height,
     row = row,
     col = col,
+    title = " Vpack ",
+    title_pos = "center",
   })
 
   vim.wo[M.win].number = false

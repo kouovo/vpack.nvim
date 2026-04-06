@@ -93,7 +93,7 @@ describe("vpack", function()
     end
 
     local view = vpack.open()
-    vim.api.nvim_win_set_cursor(view.win, { 9, 0 })
+    vim.api.nvim_win_set_cursor(view.win, { 7, 0 })
 
     actions.update_current()
 
@@ -129,7 +129,7 @@ describe("vpack", function()
     end
 
     local view = vpack.open()
-    vim.api.nvim_win_set_cursor(view.win, { 9, 0 })
+    vim.api.nvim_win_set_cursor(view.win, { 7, 0 })
 
     actions.delete_current()
 
