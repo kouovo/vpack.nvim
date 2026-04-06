@@ -4,6 +4,8 @@ Small UI for Neovim 0.12 `vim.pack`.
 
 `vpack.nvim` gives you a simple `:Vpack` window for inspecting and operating on plugins managed by the built-in pack API.
 
+![vpack screenshot](./assets/vpack.png)
+
 ## Requirements
 
 - Neovim >= 0.12
@@ -83,8 +85,8 @@ Inside the log window:
 
 ## Help
 
-Vim help is generated from this README through `panvimdoc` in CI.
-After the generated doc is committed, use:
+This repo ships generated vimdoc as `doc/vpack.txt`.
+After updating helptags, use:
 
 ```vim
 :help vpack
