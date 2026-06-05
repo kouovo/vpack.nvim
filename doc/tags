@@ -1,0 +1,11 @@
+vpack-links	vpack.txt	/*vpack-links*
+vpack-table-of-contents	vpack.txt	/*vpack-table-of-contents*
+vpack-vpack.nvim	vpack.txt	/*vpack-vpack.nvim*
+vpack-vpack.nvim-features	vpack.txt	/*vpack-vpack.nvim-features*
+vpack-vpack.nvim-install	vpack.txt	/*vpack-vpack.nvim-install*
+vpack-vpack.nvim-keymaps	vpack.txt	/*vpack-vpack.nvim-keymaps*
+vpack-vpack.nvim-notes	vpack.txt	/*vpack-vpack.nvim-notes*
+vpack-vpack.nvim-requirements	vpack.txt	/*vpack-vpack.nvim-requirements*
+vpack-vpack.nvim-setup	vpack.txt	/*vpack-vpack.nvim-setup*
+vpack-vpack.nvim-usage	vpack.txt	/*vpack-vpack.nvim-usage*
+vpack.txt	vpack.txt	/*vpack.txt*

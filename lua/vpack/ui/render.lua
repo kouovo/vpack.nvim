@@ -4,7 +4,11 @@ local namespace = vim.api.nvim_create_namespace("vpack.ui")
 local PADDING = 2
 local ITEM_INDENT = 2
 local DETAIL_INDENT = 4
+local NAME_WIDTH = 30
+local STATUS_WIDTH = 18
 local SPINNER_FRAMES = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+local HELP =
+  "[<CR>] details  [r] refresh  [c] check  [u] update  [U] update all  [d] delete  [X] clean  [l] log  [q] quit"
 
 local function with_padding(line, padding)
   return string.rep(" ", padding) .. line
@@ -14,53 +18,122 @@ local function spinner_frame(tick)
   return SPINNER_FRAMES[((tick or 1) - 1) % #SPINNER_FRAMES + 1]
 end
 
-local function format_item(item, tick)
-  local status = item.active and "●" or "○"
-  local revision = item.rev and item.rev:sub(1, 7) or "-------"
-  local update_info = item.update_info
-  local operation_info = item.operation_info
-  local suffix = ""
-
-  if operation_info and operation_info.kind == "update" then
-    if operation_info.status == "updating" then
-      suffix = string.format(" [updating %s]", spinner_frame(tick))
-    elseif operation_info.status == "updated" then
-      suffix = " [updated]"
-    elseif operation_info.status == "no_changes" then
-      suffix = " [no changes]"
-    elseif operation_info.status == "error" then
-      suffix = " [update failed]"
-    end
-  elseif update_info then
-    if update_info.status == "queued" then
-      suffix = " [queued]"
-    elseif update_info.status == "checking" then
-      suffix = string.format(" [checking %s]", spinner_frame(tick))
-    elseif update_info.status == "current" then
-      suffix = " [up-to-date]"
-    elseif update_info.status == "unsupported" then
-      suffix = " [no upstream]"
-    elseif update_info.status == "error" then
-      suffix = " [check failed]"
-    end
-  end
-
-  if update_info and update_info.status == "available" then
-    local target = update_info.target_rev and update_info.target_rev:sub(1, 7) or "-------"
-    local pending = update_info.pending_count or #update_info.commits or 0
-    return string.format("%s %s  %s → %s (+%d)%s", status, item.short_name, revision, target, pending, suffix)
-  end
-
-  return string.format("%s %s  %s%s", status, item.short_name, revision, suffix)
+local function count(items, predicate)
+  return vim.iter(items):fold(0, function(acc, item)
+    return acc + (predicate(item) and 1 or 0)
+  end)
 end
 
 local function summary_line(items)
   local total = #items
-  local active = vim.iter(items):fold(0, function(acc, item)
-    return acc + (item.active and 1 or 0)
+  local active = count(items, function(item)
+    return item.active
+  end)
+  local available = count(items, function(item)
+    return item.active and item.update_info and item.update_info.status == "available"
   end)
 
-  return string.format("%d plugins (%d active)", total, active)
+  if available > 0 then
+    return string.format(
+      "Vpack  %d plugins  %d loaded  %d update%s",
+      total,
+      active,
+      available,
+      available == 1 and "" or "s"
+    )
+  end
+
+  return string.format("Vpack  %d plugins  %d loaded", total, active)
+end
+
+local function progress_text(progress, tick)
+  if not progress then
+    return "Ready"
+  end
+
+  local icon = "•"
+  if progress.status == "running" then
+    icon = spinner_frame(tick)
+  elseif progress.status == "done" then
+    icon = "✓"
+  elseif progress.status == "error" then
+    icon = "✗"
+  end
+
+  local message = progress.message or progress.summary or progress.status or "Working"
+  local parts = { icon, message }
+
+  if progress.total and progress.total > 0 then
+    table.insert(parts, string.format("%d/%d", progress.done or 0, progress.total))
+  end
+
+  if progress.current_item and progress.current_item ~= "" then
+    table.insert(parts, progress.current_item)
+  end
+
+  if progress.summary and progress.summary ~= message then
+    table.insert(parts, progress.summary)
+  end
+
+  return table.concat(parts, "  ")
+end
+
+local function revision_text(item)
+  local revision = item.rev and item.rev:sub(1, 7) or "-------"
+  local update_info = item.update_info
+
+  if update_info and update_info.status == "available" then
+    local target = update_info.target_rev and update_info.target_rev:sub(1, 7) or "-------"
+    local pending = update_info.pending_count or #(update_info.commits or {})
+    return string.format("%s → %s (+%d)", revision, target, pending)
+  end
+
+  return revision
+end
+
+local function status_label(item, tick)
+  local operation_info = item.operation_info
+  if operation_info and operation_info.kind == "update" then
+    if operation_info.status == "updating" then
+      return string.format("[updating %s]", spinner_frame(tick))
+    elseif operation_info.status == "updated" then
+      return "[updated]"
+    elseif operation_info.status == "no_changes" then
+      return "[no changes]"
+    elseif operation_info.status == "error" then
+      return "[update failed]"
+    end
+  end
+
+  local update_info = item.update_info
+  if update_info then
+    if update_info.status == "queued" then
+      return "[queued]"
+    elseif update_info.status == "checking" then
+      return string.format("[checking %s]", spinner_frame(tick))
+    elseif update_info.status == "available" then
+      return "update available"
+    elseif update_info.status == "current" then
+      return "[up-to-date]"
+    elseif update_info.status == "unsupported" then
+      return "[no upstream]"
+    elseif update_info.status == "error" then
+      return "[check failed]"
+    end
+  end
+
+  return item.active and "" or "inactive"
+end
+
+local function format_item(item, tick)
+  local marker = item.active and "●" or "○"
+  return string.format(
+    "%s %-" .. NAME_WIDTH .. "s %-" .. STATUS_WIDTH .. "s %s",
+    marker,
+    item.short_name,
+    status_label(item, tick),
+    revision_text(item)
+  )
 end
 
 local function section_title(name, items)
@@ -150,7 +223,7 @@ local function detail_lines(item)
       string.format(
         "%sahead   %d commits",
         string.rep(" ", DETAIL_INDENT),
-        update_info.pending_count or #update_info.commits or 0
+        update_info.pending_count or #(update_info.commits or {})
       )
     )
 
@@ -170,11 +243,14 @@ local function detail_lines(item)
   return lines
 end
 
+local function highlight_line(buf, group, row, start_col)
+  vim.api.nvim_buf_add_highlight(buf, namespace, group, row - 1, start_col or PADDING, -1)
+end
+
 ---@param buf integer
 ---@param snapshot table
 function M.render(buf, snapshot)
   local padding = PADDING
-
   local items = snapshot.items or {}
   local updates_available = {}
   local loaded = {}
@@ -197,44 +273,42 @@ function M.render(buf, snapshot)
   local row_map = {}
   local lines = {
     with_padding(summary_line(items), padding),
-    with_padding(
-      "[<CR>] details  [r] refresh  [c] check  [u] update  [U] update all  [d] delete  [X] clean  [l] log  [q] quit",
-      padding
-    ),
+    with_padding(progress_text(snapshot.progress, snapshot.spinner_tick), padding),
+    with_padding(HELP, padding),
     "",
   }
+
+  local function append_section(name, section_items)
+    if vim.tbl_isempty(section_items) then
+      return
+    end
+
+    table.insert(lines, with_padding(section_title(name, section_items), padding))
+
+    for _, item in ipairs(section_items) do
+      table.insert(lines, with_padding(format_item(item, snapshot.spinner_tick), padding + ITEM_INDENT))
+      row_map[#lines] = index_by_name[item.name]
+
+      if not selected_row and snapshot.selected_name == item.name then
+        selected_row = #lines
+      end
+
+      if snapshot.details_open and snapshot.current and snapshot.current.name == item.name then
+        for _, line in ipairs(detail_lines(item)) do
+          table.insert(lines, with_padding(line, padding + ITEM_INDENT))
+          row_map[#lines] = index_by_name[item.name]
+        end
+      end
+    end
+
+    table.insert(lines, "")
+  end
 
   if vim.tbl_isempty(items) then
     table.insert(lines, with_padding("No managed packages found.", padding))
   else
-    local function append_section(name, section_items)
-      if vim.tbl_isempty(section_items) then
-        return
-      end
-
-      table.insert(lines, with_padding(section_title(name, section_items), padding))
-
-      for _, item in ipairs(section_items) do
-        table.insert(lines, with_padding(format_item(item, snapshot.spinner_tick), padding + ITEM_INDENT))
-        row_map[#lines] = index_by_name[item.name]
-
-        if not selected_row and snapshot.selected_name == item.name then
-          selected_row = #lines
-        end
-
-        if snapshot.details_open and snapshot.current and snapshot.current.name == item.name then
-          for _, line in ipairs(detail_lines(item)) do
-            table.insert(lines, with_padding(line, padding + ITEM_INDENT))
-            row_map[#lines] = index_by_name[item.name]
-          end
-        end
-      end
-
-      table.insert(lines, "")
-    end
-
-    append_section("Updates available", updates_available)
-    append_section("Loaded", loaded)
+    append_section("Updates", updates_available)
+    append_section("Loaded packages", loaded)
     append_section("Unloaded", unloaded)
   end
 
@@ -251,20 +325,28 @@ function M.render(buf, snapshot)
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.api.nvim_buf_clear_namespace(buf, namespace, 0, -1)
-  vim.api.nvim_buf_add_highlight(buf, namespace, "Title", 0, padding, -1)
-  vim.api.nvim_buf_add_highlight(buf, namespace, "Comment", 1, padding, -1)
+
+  highlight_line(buf, "Title", 1, padding)
+
+  if snapshot.progress and snapshot.progress.status == "error" then
+    highlight_line(buf, "ErrorMsg", 2, padding)
+  elseif snapshot.progress and snapshot.progress.status == "done" then
+    highlight_line(buf, "Special", 2, padding)
+  else
+    highlight_line(buf, "Comment", 2, padding)
+  end
 
   for row, line in ipairs(lines) do
-    local lnum = row - 1
-
-    if
-      line:find("^%s*Updates available %(%d+%)")
-      or line:find("^%s*Loaded %(%d+%)")
+    if row == 1 or row == 2 or row == 3 then
+      -- handled above
+    elseif
+      line:find("^%s*Updates %(%d+%)")
+      or line:find("^%s*Loaded packages %(%d+%)")
       or line:find("^%s*Unloaded %(%d+%)")
     then
-      vim.api.nvim_buf_add_highlight(buf, namespace, "Title", lnum, padding, -1)
+      highlight_line(buf, "Statement", row, padding)
     elseif row_map[row] then
-      vim.api.nvim_buf_add_highlight(buf, namespace, "Identifier", lnum, padding + 2, -1)
+      highlight_line(buf, "Identifier", row, padding + ITEM_INDENT)
     elseif
       line:find("^%s+source")
       or line:find("^%s+path")
@@ -276,10 +358,11 @@ function M.render(buf, snapshot)
       or line:find("^%s+ahead")
       or line:find("^%s+changes")
     then
-      vim.api.nvim_buf_add_highlight(buf, namespace, "Comment", lnum, padding, -1)
+      highlight_line(buf, "Comment", row, padding + ITEM_INDENT)
     end
   end
 
+  highlight_line(buf, "Comment", 3, padding)
   vim.bo[buf].modifiable = false
 end
 

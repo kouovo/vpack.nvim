@@ -13,11 +13,14 @@ local augroup = vim.api.nvim_create_augroup("vpack.events", { clear = true })
 M.config = config.values
 
 local UPDATE_PREVIEW_LIMIT = 5
-local CHECK_REFRESH_DEBOUNCE_MS = 20
+local CHECK_REFRESH_DEBOUNCE_MS = 50
 local SPINNER_INTERVAL_MS = 100
+local PROGRESS_TTL_MS = 1600
 
 local refresh_timer
 local spinner_timer
+local progress_timer
+local auto_check_pending = false
 
 local function sync_cursor_from_window()
   local win = window.get_win()
@@ -30,6 +33,10 @@ end
 local function has_spinner_activity()
   local snapshot = state.get()
 
+  if snapshot.progress and snapshot.progress.status == "running" then
+    return true
+  end
+
   for _, item in ipairs(snapshot.items or {}) do
     if item.operation_info and item.operation_info.kind == "update" and item.operation_info.status == "updating" then
       return true
@@ -41,6 +48,94 @@ local function has_spinner_activity()
   end
 
   return false
+end
+
+local function cancel_progress_timer()
+  if progress_timer then
+    progress_timer:stop()
+    progress_timer:close()
+    progress_timer = nil
+  end
+end
+
+local function schedule_progress_clear(progress)
+  cancel_progress_timer()
+
+  progress = progress or state.get_progress()
+  if not progress then
+    return
+  end
+
+  local created_at = progress.created_at
+  progress_timer = uv.new_timer()
+  progress_timer:start(PROGRESS_TTL_MS, 0, function()
+    cancel_progress_timer()
+
+    vim.schedule(function()
+      local current = state.get_progress()
+      if not current or current.created_at ~= created_at then
+        return
+      end
+
+      state.clear_progress()
+      M.render()
+    end)
+  end)
+end
+
+local function format_check_summary(summary)
+  summary = summary or {}
+
+  if (summary.total or 0) == 0 then
+    return "no loaded packages"
+  end
+
+  local parts = {}
+  if (summary.available or 0) > 0 then
+    table.insert(parts, string.format("%d available", summary.available))
+  end
+  if (summary.current or 0) > 0 then
+    table.insert(parts, string.format("%d up to date", summary.current))
+  end
+  if (summary.unsupported or 0) > 0 then
+    table.insert(parts, string.format("%d no upstream", summary.unsupported))
+  end
+  if (summary.error or 0) > 0 then
+    table.insert(parts, string.format("%d failed", summary.error))
+  end
+
+  if vim.tbl_isempty(parts) then
+    return string.format("%d checked", summary.total)
+  end
+
+  return table.concat(parts, ", ")
+end
+
+local function update_check_progress(message)
+  local snapshot = state.get()
+  local total = 0
+  local done = 0
+  local current_item
+
+  for _, item in ipairs(snapshot.items or {}) do
+    if item.active then
+      local info = item.update_info
+      total = total + 1
+
+      if info and info.status ~= "queued" and info.status ~= "checking" then
+        done = done + 1
+      elseif info and info.status == "checking" and not current_item then
+        current_item = item.short_name or item.name
+      end
+    end
+  end
+
+  state.update_progress({
+    message = message or "Checking updates",
+    done = done,
+    total = total,
+    current_item = current_item,
+  })
 end
 
 local function stop_spinner()
@@ -97,6 +192,9 @@ local function schedule_check_refresh()
 
       sync_cursor_from_window()
       state.refresh()
+      if state.get_progress() and state.get_progress().kind == "check" and state.get_progress().status == "running" then
+        update_check_progress()
+      end
       M.render()
     end)
   end)
@@ -115,7 +213,14 @@ function M.open()
   local view = window.open(M.config.window)
   M.render()
   actions.attach(view.buf)
-  M.check_updates()
+
+  auto_check_pending = true
+  vim.schedule(function()
+    if auto_check_pending and window.is_valid() then
+      auto_check_pending = false
+      M.check_updates()
+    end
+  end)
 
   local line_count = vim.api.nvim_buf_line_count(view.buf)
   local row = math.min(math.max(1, state.get_cursor()), line_count)
@@ -146,17 +251,26 @@ function M.render()
   end
 end
 
-function M.refresh()
+function M.refresh(opts)
+  opts = opts or {}
   state.refresh()
 
+  if opts.mark_current then
+    state.mark_updates_current(opts.mark_current)
+  end
+
   M.render()
-  M.check_updates()
+
+  if opts.check ~= false then
+    M.check_updates()
+  end
 
   return state.get()
 end
 
 function M.check_updates(opts)
   opts = opts or {}
+  auto_check_pending = false
 
   local loaded = vim
     .iter(state.get().items)
@@ -172,16 +286,46 @@ function M.check_updates(opts)
     on_change = function()
       schedule_check_refresh()
     end,
-    on_complete = opts.on_complete,
+    on_complete = function(summary)
+      M.finish_check_progress(summary)
+      if opts.on_complete then
+        opts.on_complete(summary)
+      end
+    end,
   }) or 0
 
   if started > 0 and window.is_valid() then
+    cancel_progress_timer()
+    state.set_progress("check", {
+      status = "running",
+      message = "Checking updates",
+      done = 0,
+      total = #loaded,
+    })
     sync_cursor_from_window()
     state.refresh()
+    update_check_progress()
     M.render()
   end
 
   return started
+end
+
+function M.finish_check_progress(summary)
+  if not state.get_progress() or state.get_progress().kind ~= "check" then
+    return
+  end
+
+  state.update_progress({
+    status = (summary and (summary.error or 0) > 0) and "error" or "done",
+    message = "Check complete",
+    done = summary and summary.total or state.get_progress().total or 0,
+    total = summary and summary.total or state.get_progress().total or 0,
+    current_item = nil,
+    summary = format_check_summary(summary),
+  })
+  M.render()
+  schedule_progress_clear(state.get_progress())
 end
 
 function M.on_pack_changed()
@@ -209,6 +353,8 @@ end
 
 function M.close()
   stop_spinner()
+  cancel_progress_timer()
+  auto_check_pending = false
   if refresh_timer then
     refresh_timer:stop()
     refresh_timer:close()

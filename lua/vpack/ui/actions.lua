@@ -5,7 +5,9 @@ local state = require("vpack.state")
 local uv = vim.uv or vim.loop
 
 local FINISHED_STATUS_TTL_MS = 1200
+local FINISHED_PROGRESS_TTL_MS = 1600
 local operation_timers = {}
+local progress_timer
 
 local function notify(message, level)
   vim.notify(message, level or vim.log.levels.INFO, { title = "vpack" })
@@ -42,6 +44,43 @@ end
 
 local function render_current_view()
   require("vpack").render()
+end
+
+local function cancel_progress_timer()
+  if progress_timer then
+    progress_timer:stop()
+    progress_timer:close()
+    progress_timer = nil
+  end
+end
+
+local function schedule_progress_clear(generation)
+  cancel_progress_timer()
+
+  local progress = state.get_progress()
+  if not progress then
+    return
+  end
+
+  local created_at = progress.created_at
+  progress_timer = uv.new_timer()
+  progress_timer:start(FINISHED_PROGRESS_TTL_MS, 0, function()
+    cancel_progress_timer()
+
+    vim.schedule(function()
+      if generation ~= state.get_generation() then
+        return
+      end
+
+      local current = state.get_progress()
+      if not current or current.created_at ~= created_at then
+        return
+      end
+
+      state.clear_progress()
+      render_current_view()
+    end)
+  end)
 end
 
 local function cancel_operation_timer(name)
@@ -96,6 +135,20 @@ local function split_result_names(requested, changed, failed)
   end
 
   return changed_names, unchanged, failed_names, failed_lookup
+end
+
+local function concat_names(left, right)
+  local names = {}
+
+  for _, name in ipairs(left or {}) do
+    table.insert(names, name)
+  end
+
+  for _, name in ipairs(right or {}) do
+    table.insert(names, name)
+  end
+
+  return names
 end
 
 local function format_check_summary(summary)
@@ -199,10 +252,34 @@ local function on_async_update_complete(result, names, success_message, error_me
       else
         notify(vim.tbl_isempty(changed_names) and "No package changes found" or success_message)
       end
-      require("vpack").refresh()
+      local successful_names = concat_names(changed_names, unchanged_names)
+      state.update_progress({
+        status = vim.tbl_isempty(failed_names) and "done" or "error",
+        message = vim.tbl_isempty(failed_names) and success_message or "Update finished with errors",
+        done = #(names or {}),
+        total = #(names or {}),
+        current_item = nil,
+        summary = vim.tbl_isempty(failed_names)
+            and string.format("%d package%s processed", #(names or {}), #(names or {}) == 1 and "" or "s")
+          or string.format("%d failed", #failed_names),
+      })
+      schedule_progress_clear(generation)
+      require("vpack").refresh({
+        check = false,
+        mark_current = successful_names,
+      })
       return
     end
 
+    state.update_progress({
+      status = "error",
+      message = error_message,
+      done = #(names or {}),
+      total = #(names or {}),
+      current_item = nil,
+      summary = result and result.error or nil,
+    })
+    schedule_progress_clear(generation)
     state.set_operation(names, {
       kind = "update",
       status = "error",
@@ -239,6 +316,7 @@ function M.check_updates()
 
   local started = require("vpack").check_updates({
     force = true,
+    manual = true,
     on_complete = function(summary)
       notify(format_check_summary(summary), (summary.error or 0) > 0 and vim.log.levels.WARN or vim.log.levels.INFO)
     end,
@@ -279,6 +357,14 @@ function M.update_current()
     kind = "update",
     status = "updating",
   })
+  cancel_progress_timer()
+  state.set_progress("update", {
+    status = "running",
+    message = string.format("Updating %s", current.short_name or current.name),
+    done = 0,
+    total = 1,
+    current_item = current.short_name or current.name,
+  })
   render_current_view()
   notify(string.format("Updating %s", current.name))
 
@@ -306,8 +392,27 @@ function M.update_current()
       kind = "update",
       status = "updated",
     })
-    require("vpack").refresh()
+    state.update_progress({
+      status = "done",
+      message = string.format("Updated %s", current.short_name or current.name),
+      done = 1,
+      total = 1,
+      current_item = nil,
+    })
+    schedule_progress_clear(generation)
+    require("vpack").refresh({
+      check = false,
+      mark_current = { current.name },
+    })
   else
+    state.update_progress({
+      status = "error",
+      message = string.format("Failed to update %s", current.short_name or current.name),
+      done = 1,
+      total = 1,
+      current_item = nil,
+    })
+    schedule_progress_clear(generation)
     state.set_operation({ current.name }, nil)
     render_current_view()
   end
@@ -321,18 +426,33 @@ function M.update_all()
     return
   end
 
-  if checks_running then
-    notify("Update checks are still running", vim.log.levels.INFO)
-    return
-  end
-
   if vim.tbl_isempty(names) then
-    if missing_checks then
-      notify("No checked updates available, press c first", vim.log.levels.INFO)
-    else
-      notify("No updates available", vim.log.levels.INFO)
+    if checks_running then
+      notify("Update checks are still running", vim.log.levels.INFO)
+      return
     end
-    return
+
+    if missing_checks then
+      notify("Checking updates before update all", vim.log.levels.INFO)
+      local started = require("vpack").check_updates({
+        force = true,
+        manual = true,
+        on_complete = function()
+          vim.schedule(M.update_all)
+        end,
+      })
+
+      if started == 0 then
+        notify("Loaded package checks are already in progress", vim.log.levels.INFO)
+      end
+
+      return
+    end
+
+    if vim.tbl_isempty(names) then
+      notify("No updates available", vim.log.levels.INFO)
+      return
+    end
   end
 
   local generation = state.get_generation()
@@ -343,6 +463,14 @@ function M.update_all()
       status = "updating",
     })
   end
+
+  cancel_progress_timer()
+  state.set_progress("update", {
+    status = "running",
+    message = string.format("Updating %d available package%s", #names, #names == 1 and "" or "s"),
+    done = 0,
+    total = #names,
+  })
 
   render_current_view()
   notify(string.format("Updating %d available package%s", #names, #names == 1 and "" or "s"))
@@ -365,8 +493,27 @@ function M.update_all()
       kind = "update",
       status = "updated",
     })
-    require("vpack").refresh()
+    state.update_progress({
+      status = "done",
+      message = "Updated all packages",
+      done = #names,
+      total = #names,
+      current_item = nil,
+    })
+    schedule_progress_clear(generation)
+    require("vpack").refresh({
+      check = false,
+      mark_current = names,
+    })
   else
+    state.update_progress({
+      status = "error",
+      message = "Failed to update packages",
+      done = #names,
+      total = #names,
+      current_item = nil,
+    })
+    schedule_progress_clear(generation)
     state.set_operation(names, nil)
     render_current_view()
   end

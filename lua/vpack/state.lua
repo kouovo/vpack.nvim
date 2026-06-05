@@ -1,7 +1,7 @@
 local backend = require("vpack.backend.pack")
 local updates = require("vpack.backend.updates")
 
-local FIRST_ITEM_LINE = 4
+local FIRST_ITEM_LINE = 6
 
 local M = {
   snapshot = {
@@ -16,6 +16,7 @@ local M = {
     operations = {},
     generation = 0,
     spinner_tick = 1,
+    progress = nil,
   },
 }
 
@@ -180,6 +181,7 @@ function M.reset()
   M.snapshot.operations = {}
   M.snapshot.spinner_tick = 1
   M.snapshot.row_map = {}
+  M.snapshot.progress = nil
 end
 
 ---@param names string[]
@@ -223,6 +225,11 @@ function M.get_generation()
   return M.snapshot.generation
 end
 
+---@param names string[]
+function M.mark_updates_current(names)
+  updates.mark_current(names, M.snapshot.items)
+end
+
 function M.tick_spinner()
   M.snapshot.spinner_tick = (M.snapshot.spinner_tick % 10) + 1
   return M.snapshot.spinner_tick
@@ -231,6 +238,43 @@ end
 ---@return integer
 function M.get_cursor()
   return M.snapshot.cursor
+end
+
+---@param kind string
+---@param opts? table
+function M.set_progress(kind, opts)
+  opts = opts or {}
+  M.snapshot.progress = vim.tbl_extend("force", {
+    kind = kind,
+    status = "running",
+    message = nil,
+    done = 0,
+    total = 0,
+    current_item = nil,
+    summary = nil,
+    created_at = (vim.uv or vim.loop).now(),
+  }, opts)
+  M.snapshot.progress.kind = kind
+
+  return M.snapshot.progress
+end
+
+---@param opts table
+function M.update_progress(opts)
+  if not M.snapshot.progress then
+    return
+  end
+
+  M.snapshot.progress = vim.tbl_extend("force", M.snapshot.progress, opts)
+end
+
+function M.clear_progress()
+  M.snapshot.progress = nil
+end
+
+---@return table?
+function M.get_progress()
+  return M.snapshot.progress
 end
 
 ---@return table
