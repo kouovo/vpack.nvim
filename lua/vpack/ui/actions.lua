@@ -137,20 +137,6 @@ local function split_result_names(requested, changed, failed)
   return changed_names, unchanged, failed_names, failed_lookup
 end
 
-local function concat_names(left, right)
-  local names = {}
-
-  for _, name in ipairs(left or {}) do
-    table.insert(names, name)
-  end
-
-  for _, name in ipairs(right or {}) do
-    table.insert(names, name)
-  end
-
-  return names
-end
-
 local function format_check_summary(summary)
   summary = summary or {}
 
@@ -252,7 +238,6 @@ local function on_async_update_complete(result, names, success_message, error_me
       else
         notify(vim.tbl_isempty(changed_names) and "No package changes found" or success_message)
       end
-      local successful_names = concat_names(changed_names, unchanged_names)
       state.update_progress({
         status = vim.tbl_isempty(failed_names) and "done" or "error",
         message = vim.tbl_isempty(failed_names) and success_message or "Update finished with errors",
@@ -264,10 +249,8 @@ local function on_async_update_complete(result, names, success_message, error_me
           or string.format("%d failed", #failed_names),
       })
       schedule_progress_clear(generation)
-      require("vpack").refresh({
-        check = false,
-        mark_current = successful_names,
-      })
+      require("vpack").refresh({ check = false })
+      require("vpack").check_updates({ force = true })
       return
     end
 
@@ -400,10 +383,8 @@ function M.update_current()
       current_item = nil,
     })
     schedule_progress_clear(generation)
-    require("vpack").refresh({
-      check = false,
-      mark_current = { current.name },
-    })
+    require("vpack").refresh({ check = false })
+    require("vpack").check_updates({ force = true })
   else
     state.update_progress({
       status = "error",
@@ -501,10 +482,8 @@ function M.update_all()
       current_item = nil,
     })
     schedule_progress_clear(generation)
-    require("vpack").refresh({
-      check = false,
-      mark_current = names,
-    })
+    require("vpack").refresh({ check = false })
+    require("vpack").check_updates({ force = true })
   else
     state.update_progress({
       status = "error",

@@ -531,36 +531,6 @@ function M.decorate(items)
   return items
 end
 
----@param names string[]
----@param items table[]
-function M.mark_current(names, items)
-  if not names or vim.tbl_isempty(names) then
-    return
-  end
-
-  local requested = {}
-  for _, name in ipairs(names) do
-    requested[name] = true
-  end
-
-  for _, item in ipairs(items or {}) do
-    if requested[item.name] then
-      local info = {
-        status = "current",
-        path = item.path,
-        current_rev = item.rev,
-        target_rev = item.rev,
-        pending_count = 0,
-        commits = {},
-        checked_at = now_ms(),
-      }
-
-      cache[item.name] = info
-      item.update_info = vim.deepcopy(info)
-    end
-  end
-end
-
 function M.check_loaded(items, opts)
   opts = opts or {}
   local batch

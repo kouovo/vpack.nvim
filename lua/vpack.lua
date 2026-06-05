@@ -255,10 +255,6 @@ function M.refresh(opts)
   opts = opts or {}
   state.refresh()
 
-  if opts.mark_current then
-    state.mark_updates_current(opts.mark_current)
-  end
-
   M.render()
 
   if opts.check ~= false then

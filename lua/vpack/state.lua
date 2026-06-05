@@ -225,11 +225,6 @@ function M.get_generation()
   return M.snapshot.generation
 end
 
----@param names string[]
-function M.mark_updates_current(names)
-  updates.mark_current(names, M.snapshot.items)
-end
-
 function M.tick_spinner()
   M.snapshot.spinner_tick = (M.snapshot.spinner_tick % 10) + 1
   return M.snapshot.spinner_tick
